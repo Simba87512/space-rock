@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<title>Rymdstenhoppsspel</title>
+<style>
+  body { margin:0; overflow:hidden; background:black; }
+  canvas { display:block; background:black; }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let player = {x:0, y:0, width:40, height:40, vx:0, vy:0, color:'cyan', onGround:false};
+let cameraOffset=0;
+let keys={};
+let score=0;
+let currentLevel=1;
+let stones=[];
+let rainbowMessage=false;
+let particles=[];
+let farStars=[], midStars=[], nearStars=[], planets=[];
+let playerJumpHeight = 12;
+
+// Nivåer
+const levels = [20,35,60,80,110,140,200,350,500,750];
+const levelTimes = [60,60,60,90,120,240,360,600,600,900]; // i sekunder
+let timeLeft = levelTimes[currentLevel-1];
+let lastTime = Date.now();
+
+document.addEventListener('keydown', e=>{ 
+    keys[e.key.toLowerCase()]=true; 
+    if(e.key.toLowerCase()==='r') {
+        score=0; 
+        currentLevel=1;
+        initLevel(currentLevel);
+    }
+});
+document.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false; });
+
+function initBackground(){
+  farStars=[]; midStars=[]; nearStars=[]; planets=[];
+  for(let i=0;i<150;i++) farStars.push({x:Math.random()*canvas.width*10, y:Math.random()*canvas.height, size:1});
+  for(let i=0;i<100;i++) midStars.push({x:Math.random()*canvas.width*10, y:Math.random()*canvas.height, size:2});
+  for(let i=0;i<50;i++) nearStars.push({x:Math.random()*canvas.width*10, y:Math.random()*canvas.height, size:3});
+  for(let i=0;i<10;i++) planets.push({x:Math.random()*canvas.width*10, y:Math.random()*canvas.height/2, radius:30+Math.random()*40, color:`hsl(${Math.random()*360},60%,50%)`, speed:Math.random()*0.3+0.1});
+}
+
+function createParticles(x,y,color){
+  for(let i=0;i<10;i++){
+    particles.push({x:x + player.width/2, y:y + player.height, vx:(Math.random()-0.5)*4, vy:-Math.random()*3, alpha:1, color:color});
+  }
+}
+
+function initLevel(level){
+  rainbowMessage=false;
+  timeLeft = levelTimes[level-1];
+  lastTime = Date.now();
+
+  const stoneCount = levels[level-1];
+  stones=[];
+  let x=200;
+  let baseDistance = 150;
+  let distanceIncrease = 20 * (level-1);
+  for(let i=0;i<stoneCount;i++){
+    let stoneY = canvas.height-100-Math.random()*20 - Math.min(level*2,50);
+    stones.push({
+      x: x,
+      y: stoneY,
+      width: 150,
+      height: 40,
+      isMoving: false,
+      speed: 0,
+      visited: false
+    });
+    x += baseDistance + distanceIncrease + Math.random()*30;
+  }
+
+  // Första stenen = spawnstenen = grön
+  stones[0].y = canvas.height-140;
+  stones[0].color = 'green';
+  player.x = stones[0].x + stones[0].width/2 - player.width/2;
+  player.y = stones[0].y - player.height;
+  player.vx=0; player.vy=0; player.onGround=true;
+
+  // Sista stenen = gul och stilla
+  const last = stones[stones.length-1];
+  last.isMoving=false;
+  last.y = canvas.height-140;
+  last.color='yellow';
+
+  // Rörliga stenar nivå 5+
+  let movingChance = Math.min(0.2 + (level-5)*0.05,0.6);
+  for(let i=1;i<stones.length-1;i++){
+    if(level>=5 && Math.random()<movingChance){
+      stones[i].isMoving=true;
+      stones[i].speed = 1 + (level-5)*0.3;
+    }
+  }
+
+  playerJumpHeight = 12;
+}
+
+function updateBackground(){
+  for(let s of farStars) s.x -= 0.2;
+  for(let s of midStars) s.x -= 0.5;
+  for(let s of nearStars) s.x -= 1;
+  for(let p of planets){
+    p.x -= p.speed;
+    if(p.x - cameraOffset < -p.radius*2) p.x = cameraOffset + canvas.width + Math.random()*canvas.width*5;
+  }
+}
+
+function update(){
+  if(rainbowMessage) return;
+
+  updateBackground();
+
+  // Uppdatera tiden
+  let now = Date.now();
+  let delta = (now - lastTime)/1000; // sekunder
+  lastTime = now;
+  timeLeft -= delta;
+
+  if(timeLeft <= 0){ 
+      // Tiden tog slut -> reset
+      score = 0;
+      currentLevel = 1;
+      initLevel(currentLevel);
+  }
+
+  let wasOnGround=player.onGround;
+  player.vy += 0.4;
+  if(keys['arrowleft']) player.vx=-5; 
+  else if(keys['arrowright']) player.vx=5; 
+  else player.vx=0;
+
+  if(keys['arrowup'] && player.onGround){ 
+      player.vy=-playerJumpHeight; 
+      createParticles(player.x,player.y,'cyan'); 
+  }
+
+  player.x += player.vx;
+  player.y += player.vy;
+  player.onGround=false;
+
+  for(let stone of stones){
+    if(player.x + player.width > stone.x && player.x < stone.x+stone.width && player.y + player.height >= stone.y && player.y + player.height <= stone.y + stone.height){
+      player.y = stone.y - player.height;
+      player.vy=0;
+      player.onGround=true;
+      if(!stone.visited){ score+=1; stone.visited=true; }
+      if(!wasOnGround) createParticles(player.x,player.y,'yellow');
+
+      // Om sista stenen
+      if(stone === stones[stones.length-1]){
+        if(currentLevel<10){
+          currentLevel++;
+          initLevel(currentLevel);
+        } else rainbowMessage=true; // level 10 klar
+      }
+    }
+
+    if(stone.isMoving){
+      stone.x += Math.sin(Date.now()/500)*stone.speed;
+    }
+  }
+
+  if(player.y>canvas.height){ 
+    score=0;
+    currentLevel=1;
+    initLevel(currentLevel);
+  }
+
+  cameraOffset = player.x - 200;
+
+  particles.forEach(p=>{ p.x+=p.vx; p.y+=p.vy; p.vy+=0.1; p.alpha-=0.03; });
+  particles = particles.filter(p=>p.alpha>0);
+}
+
+function drawBackground(){
+  for(let p of planets){ ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x - cameraOffset,p.y,p.radius,0,Math.PI*2); ctx.fill(); }
+  ctx.fillStyle='white';
+  for(let s of farStars) ctx.fillRect(s.x - cameraOffset, s.y, s.size, s.size);
+  for(let s of midStars) ctx.fillRect(s.x - cameraOffset, s.y, s.size, s.size);
+  for(let s of nearStars) ctx.fillRect(s.x - cameraOffset, s.y, s.size, s.size);
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawBackground();
+
+  for(let i=0;i<stones.length;i++){
+    let stone = stones[i];
+    if(i === stones.length-1) ctx.fillStyle='yellow';        // sista stenen gul
+    else if(i===0) ctx.fillStyle = 'green';                 // första stenen grön
+    else ctx.fillStyle = stone.visited ? 'gray':'white';    // övriga stenar
+    ctx.fillRect(stone.x - cameraOffset, stone.y, stone.width, stone.height);
+  }
+
+  particles.forEach(p=>{ ctx.fillStyle=`rgba(${Math.floor(Math.random()*255)},${Math.floor(Math.random()*255)},0,${p.alpha})`; ctx.fillRect(p.x - cameraOffset,p.y,4,4); });
+
+  ctx.fillStyle=player.color;
+  ctx.fillRect(player.x - cameraOffset, player.y, player.width, player.height);
+
+  ctx.fillStyle='white';
+  ctx.font="20px sans-serif";
+  ctx.fillText(`Level: ${currentLevel}`,20,30);
+  ctx.fillText(`Stenar kvar: ${stones.filter(s=>!s.visited).length}`,canvas.width-170,30);
+  ctx.fillText(`Tid: ${Math.floor(timeLeft)}s`,canvas.width-170,60);
+  ctx.fillText(`Poäng: ${score}`,20,60);
+
+  if(rainbowMessage){
+    const text="🎉 Grattis! Du har klarat spelet! 🌈";
+    ctx.fillStyle=`hsl(${Date.now()%360},100%,50%)`;
+    ctx.font="30px sans-serif";
+    ctx.fillText(text,canvas.width/2 - ctx.measureText(text).width/2,50);
+  }
+}
+
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+initBackground();
+initLevel(currentLevel);
+loop();
+</script>
+</body>
+</html>
